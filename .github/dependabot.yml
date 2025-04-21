@@ -1,0 +1,66 @@
+version: 2
+registries:
+  nuget.org:
+    type: nuget-feed
+    url: https://api.nuget.org/v3/index.json
+  github.butr:
+    type: nuget-feed
+    url: https://nuget.pkg.github.com/BUTR/index.json
+    username: Aragas
+    password: ${{secrets.NUGET_KEY}}
+updates:
+  - package-ecosystem: nuget
+    registries:
+      - nuget.org
+      - github.butr
+    directory: /
+    schedule:
+      interval: daily
+    groups:
+      Blazor:
+        patterns:
+          - "Microsoft.AspNetCore.Components*"
+      Blazored:
+        patterns:
+          - "Blazored*"
+      Blazorise:
+        patterns:
+          - "Blazorise*"
+      System:
+        patterns:
+          - "System*"
+      Extensions:
+        patterns:
+          - "Microsoft.Extensions*"
+      ASPNETCore:
+        patterns:
+          - "Microsoft.AspNetCore*"
+      EFCore:
+        patterns:
+          - "Npgsql*"
+          - "Microsoft.EntityFrameworkCore*"
+          - "Community.Microsoft.Extensions.Caching.PostgreSql"
+      OpenTelemetry:
+        patterns:
+          - "OpenTelemetry*"
+      Polly:
+        patterns:
+          - "Polly*"
+          - "Microsoft.Extensions.Http.Polly"
+      Quartz:
+        patterns:
+          - "Quartz*"
+      Swashbuckle:
+        patterns:
+          - "Swashbuckle*"
+      Tests:
+        patterns:
+          - "Microsoft.AspNetCore*"
+      EFPlus:
+        patterns:
+          - "Z.EntityFramework.Plus*"
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: daily
