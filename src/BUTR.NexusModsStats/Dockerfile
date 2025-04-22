@@ -1,6 +1,4 @@
 ﻿FROM mcr.microsoft.com/dotnet/sdk:9.0-alpine AS build
-ARG BUILD_CONFIGURATION=Release
-ARG RUNTIME_IDENTIFIER=linux-musl-arm64
 
 RUN apk add --no-cache \
     clang lld gcc g++ musl-dev zlib-dev libgcc libstdc++ binutils upx
@@ -11,7 +9,7 @@ RUN dotnet restore "BUTR.NexusModsStats/BUTR.NexusModsStats.csproj"
 COPY . .
 WORKDIR "/src/BUTR.NexusModsStats"
 
-RUN dotnet publish -c $BUILD_CONFIGURATION -r $RUNTIME_IDENTIFIER -o /app/publish
+RUN chmod +x build.sh && ./build.sh
 
 RUN upx --best --lzma /app/publish/BUTR.NexusModsStats || echo "UPX failed, continuing"
 
