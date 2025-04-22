@@ -5,8 +5,6 @@ using BUTR.NexusModsStats.Utils;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 
-using System.Diagnostics.CodeAnalysis;
-
 namespace BUTR.NexusModsStats.Extensions;
 
 public static class ModVersionExtensions
@@ -29,8 +27,6 @@ public static class ModVersionExtensions
 
     public class ModVersionShieldsEndpointDefinition : IEndpointDefinition
     {
-        [RequiresUnreferencedCode("Minimal API")]
-        [RequiresDynamicCode("Minimal API")]
         public void RegisterEndpoints(WebApplication app)
         {
             app.MapGet("/mod-version", async (

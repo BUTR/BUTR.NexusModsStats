@@ -29,8 +29,10 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!--
     <PackageReference Include="Community.Microsoft.Extensions.Caching.PostgreSql" Version="5.0.0" />
     <PackageReference Include="Dapper" Version="2.1.66" />
+    -->
     <PackageReference Include="Microsoft.Bcl.AsyncInterfaces" Version="9.0.4" />
     <PackageReference Include="Microsoft.Extensions.Http.Resilience" Version="9.4.0" />
     <PackageReference Include="Npgsql" Version="9.0.3" />

@@ -2,11 +2,8 @@
 using BUTR.NexusModsStats.Options;
 using BUTR.NexusModsStats.Utils;
 
-using Community.Microsoft.Extensions.Caching.PostgreSql;
-
 using Npgsql;
 
-using OpenTelemetry.Exporter;
 using OpenTelemetry.Logs;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
@@ -34,6 +31,8 @@ builder.Services.AddOutputCache(options =>
 {
     options.AddBasePolicy(x => x.Expire(TimeSpan.FromSeconds(60)));
 });
+builder.Services.AddDistributedMemoryCache();
+/*
 builder.Services.AddDistributedPostgreSqlCache(options =>
 {
     var main = connectionStringSection.GetValue<string>(nameof(ConnectionStringsOptions.Main));
@@ -43,6 +42,7 @@ builder.Services.AddDistributedPostgreSqlCache(options =>
     options.TableName = "sitenexusmods_cache";
     options.CreateInfrastructure = true;
 });
+*/
 
 var openTelemetry = builder.Services.AddOpenTelemetry()
     .WithMetrics()

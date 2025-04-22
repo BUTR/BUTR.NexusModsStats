@@ -4,8 +4,6 @@ using BUTR.NexusModsStats.Services;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 
-using System.Diagnostics.CodeAnalysis;
-
 namespace BUTR.NexusModsStats.Extensions;
 
 public static class DownloadsExtensions
@@ -26,8 +24,6 @@ public static class DownloadsExtensions
 
     public class DownloadsEndpointDefinition : IEndpointDefinition
     {
-        [RequiresUnreferencedCode("Minimal API")]
-        [RequiresDynamicCode("Minimal API")]
         public void RegisterEndpoints(WebApplication app)
         {
             app.MapGet("/downloads", static async (
