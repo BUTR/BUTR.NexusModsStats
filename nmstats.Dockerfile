@@ -1,8 +1,7 @@
-﻿FROM --platform=$TARGETPLATFORM mcr.microsoft.com/dotnet/sdk:9.0-alpine AS restore
+﻿FROM --platform=$TARGETPLATFORM mcr.microsoft.com/dotnet/sdk:10.0-preview-alpine-aot AS restore
 ARG TARGETARCH
 ENV RUNTIME_IDENTIFIER=linux-musl-${TARGETARCH}
 WORKDIR /build
-
 
 COPY ["src/BUTR.NexusModsStats/BUTR.NexusModsStats.csproj", "src/BUTR.NexusModsStats/"]
 COPY ["src/nuget.config", "src/"]
@@ -17,20 +16,18 @@ ARG TARGETARCH
 ENV RUNTIME_IDENTIFIER=linux-musl-${TARGETARCH}
 WORKDIR /build
 
-RUN apk add --no-cache \
-    clang lld gcc g++ musl-dev zlib-dev libgcc libstdc++ binutils upx
+RUN apk add --no-cache upx
 
 RUN dotnet publish "src/BUTR.NexusModsStats/BUTR.NexusModsStats.csproj" -c Release -r $RUNTIME_IDENTIFIER -o /app/publish;
 
-# RUN chmod +x build.sh && ./build.sh
-
 RUN upx --best --lzma /app/publish/BUTR.NexusModsStats || echo "UPX failed, continuing"
 
-FROM alpine:3.19 AS final
+FROM mcr.microsoft.com/dotnet/runtime-deps:9.0-alpine AS final
 WORKDIR /app
 
 COPY --from=publish /app/publish /app
-RUN chmod +x /app/BUTR.NexusModsStats
+
+USER $APP_UID
 
 LABEL org.opencontainers.image.source="https://github.com/BUTR/BUTR.NexusModsStats"
 EXPOSE 8080/tcp
