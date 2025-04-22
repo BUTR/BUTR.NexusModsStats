@@ -1,6 +1,8 @@
 ﻿using BUTR.NexusModsStats.Models;
+using BUTR.NexusModsStats.Options;
 
 using Microsoft.Extensions.Caching.Distributed;
+using Microsoft.Extensions.Options;
 
 using System.Collections.Concurrent;
 using System.Net.Http.Headers;
@@ -22,13 +24,15 @@ public sealed partial class NexusModsApiClient : INexusModsApiClient
 {
     private readonly HttpClient _httpClient;
     private readonly IDistributedCache _cache;
+    private readonly NexusModsOptions _options;
     private readonly DistributedCacheEntryOptions _expiration = new() { AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(5) };
     private readonly ConcurrentDictionary<string, SemaphoreSlim> _locks = new();
 
-    public NexusModsApiClient(HttpClient httpClient, IDistributedCache cache)
+    public NexusModsApiClient(HttpClient httpClient, IDistributedCache cache, IOptionsSnapshot<NexusModsOptions> options)
     {
         _httpClient = httpClient;
         _cache = cache;
+        _options = options.Value;
     }
 
     private static string HashString(string value)
@@ -42,9 +46,8 @@ public sealed partial class NexusModsApiClient : INexusModsApiClient
 
     public Task<NexusModsModInfoResponse?> GetModAsync(string gameDomain, string modId, CancellationToken ct)
     {
-        var apiKey = _httpClient.DefaultRequestHeaders.TryGetValues("apikey", out var apiKeys) ? apiKeys.First() : throw new Exception("Missing apikey");
         return GetCachedWithTimeLimitAsync<NexusModsModInfoResponse?>(
-            $"/v1/games/{gameDomain}/mods/{modId}.json", apiKey,
+            $"/v1/games/{gameDomain}/mods/{modId}.json", _options.ApiKey,
             NexusModsApiClientJsonSerializerContext.Default.NexusModsModInfoResponse, ct);
     }
 

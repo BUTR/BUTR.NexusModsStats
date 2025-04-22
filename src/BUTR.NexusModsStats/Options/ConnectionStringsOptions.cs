@@ -2,5 +2,5 @@
 
 public sealed record ConnectionStringsOptions
 {
-    public string Main { get; init; } = null!;
+    public string Main { get; set; } = null!;
 }

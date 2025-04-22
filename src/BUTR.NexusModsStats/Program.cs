@@ -13,12 +13,18 @@ using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
 
 const string ConnectionStringsSectionName = "ConnectionStrings";
-const string OltpSectionName = "Oltp";
+const string NexusModsSectionName = "NexusMods";
+const string OtlpSectionName = "Otlp";
 
 var builder = WebApplication.CreateSlimBuilder(args);
 
 var connectionStringSection = builder.Configuration.GetSection(ConnectionStringsSectionName);
-builder.Services.AddOptions<ConnectionStringsOptions>().Bind(connectionStringSection);
+builder.Services.Configure<ConnectionStringsOptions>(connectionStringSection);
+
+var nexusModsSectionNameSection = builder.Configuration.GetSection(NexusModsSectionName);
+builder.Services.Configure<NexusModsOptions>(nexusModsSectionNameSection);
+
+var otlpSection = builder.Configuration.GetSection(OtlpSectionName);
 
 builder.Services.ConfigureHttpJsonOptions(options =>
 {
@@ -43,7 +49,7 @@ var openTelemetry = builder.Services.AddOpenTelemetry()
     .WithTracing()
     .WithLogging();
 
-if (builder.Configuration.GetSection(OltpSectionName) is { } oltpSection)
+if (otlpSection.Get<OtlpOptions>() is { } otlpOptions)
 {
     openTelemetry.ConfigureResource(b =>
     {
@@ -56,9 +62,8 @@ if (builder.Configuration.GetSection(OltpSectionName) is { } oltpSection)
         b.AddTelemetrySdk();
     });
 
-    if (oltpSection.GetValue<string?>(nameof(OtlpOptions.MetricsEndpoint)) is { } metricsEndpoint)
+    if (!string.IsNullOrEmpty(otlpOptions.MetricsEndpoint))
     {
-        var metricsProtocol = oltpSection.GetValue<OtlpExportProtocol>(nameof(OtlpOptions.MetricsProtocol));
         openTelemetry.WithMetrics(b => b
             .AddRuntimeInstrumentation(instrumentationOptions =>
             {
@@ -68,14 +73,13 @@ if (builder.Configuration.GetSection(OltpSectionName) is { } oltpSection)
             .AddAspNetCoreInstrumentation()
             .AddOtlpExporter(o =>
             {
-                o.Endpoint = new Uri(metricsEndpoint);
-                o.Protocol = metricsProtocol;
+                o.Endpoint = new Uri(otlpOptions.MetricsEndpoint);
+                o.Protocol = otlpOptions.MetricsProtocol;
             }));
     }
 
-    if (oltpSection.GetValue<string?>(nameof(OtlpOptions.TracingEndpoint)) is { } tracingEndpoint)
+    if (!string.IsNullOrEmpty(otlpOptions.TracingEndpoint))
     {
-        var tracingProtocol = oltpSection.GetValue<OtlpExportProtocol>(nameof(OtlpOptions.TracingProtocol));
         openTelemetry.WithTracing(b => b
             .AddNpgsql()
             .AddHttpClientInstrumentation(instrumentationOptions =>
@@ -88,14 +92,13 @@ if (builder.Configuration.GetSection(OltpSectionName) is { } oltpSection)
             })
             .AddOtlpExporter(o =>
             {
-                o.Endpoint = new Uri(tracingEndpoint);
-                o.Protocol = tracingProtocol;
+                o.Endpoint = new Uri(otlpOptions.TracingEndpoint);
+                o.Protocol = otlpOptions.TracingProtocol;
             }));
     }
 
-    if (oltpSection.GetValue<string?>(nameof(OtlpOptions.LoggingEndpoint)) is { } loggingEndpoint)
+    if (!string.IsNullOrEmpty(otlpOptions.LoggingEndpoint))
     {
-        var loggingProtocol = oltpSection.GetValue<OtlpExportProtocol>(nameof(OtlpOptions.LoggingProtocol));
 
         builder.Logging.AddOpenTelemetry(o =>
         {
@@ -104,8 +107,8 @@ if (builder.Configuration.GetSection(OltpSectionName) is { } oltpSection)
             o.IncludeFormattedMessage = true;
             o.AddOtlpExporter((options, processorOptions) =>
             {
-                options.Endpoint = new Uri(loggingEndpoint);
-                options.Protocol = loggingProtocol;
+                options.Endpoint = new Uri(otlpOptions.LoggingEndpoint);
+                options.Protocol = otlpOptions.LoggingProtocol;
             });
         });
     }

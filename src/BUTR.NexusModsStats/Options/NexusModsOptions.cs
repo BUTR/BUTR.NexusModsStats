@@ -2,5 +2,5 @@
 
 public sealed record NexusModsOptions
 {
-    public string ApiKey { get; init; } = null!;
+    public string ApiKey { get; set; } = null!;
 }
