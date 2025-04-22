@@ -8,7 +8,6 @@ on:
       - '.github/workflows/backend-docker.yml'
       - 'nmstats.Dockerfile'
       - 'src/**'
-      - '!src/BUTR.NexusModsStats/**'
       - 'build/**'
   workflow_dispatch:
 
