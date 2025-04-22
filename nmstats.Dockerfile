@@ -1,23 +1,26 @@
 ﻿FROM --platform=$BUILDPLATFORM mcr.microsoft.com/dotnet/sdk:9.0-alpine AS restore
 ARG TARGETARCH
+ENV RUNTIME_IDENTIFIER=linux-musl-${TARGETARCH}
 WORKDIR /build
+
 
 COPY ["src/BUTR.NexusModsStats/BUTR.NexusModsStats.csproj", "src/BUTR.NexusModsStats/"]
 COPY ["src/nuget.config", "src/"]
 
-RUN dotnet restore "src/BUTR.NexusModsStats/BUTR.NexusModsStats.csproj" -a $TARGETARCH;
+RUN dotnet restore "src/BUTR.NexusModsStats/BUTR.NexusModsStats.csproj" -r $RUNTIME_IDENTIFIER;
 
 COPY ["src/BUTR.NexusModsStats/", "src/BUTR.NexusModsStats/"]
 
 
 FROM restore AS publish
 ARG TARGETARCH
+ENV RUNTIME_IDENTIFIER=linux-musl-${TARGETARCH}
 WORKDIR /build
 
 RUN apk add --no-cache \
     clang lld gcc g++ musl-dev zlib-dev libgcc libstdc++ binutils upx
 
-RUN dotnet publish "src/BUTR.NexusModsStats/BUTR.NexusModsStats.csproj" -c Release -a $TARGETARCH -o /app/publish;
+RUN dotnet publish "src/BUTR.NexusModsStats/BUTR.NexusModsStats.csproj" -c Release -r $RUNTIME_IDENTIFIER -o /app/publish;
 
 # RUN chmod +x build.sh && ./build.sh
 
