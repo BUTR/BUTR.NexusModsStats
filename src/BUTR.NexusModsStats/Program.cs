@@ -18,6 +18,7 @@ const string OltpSectionName = "Oltp";
 var builder = WebApplication.CreateSlimBuilder(args);
 
 var connectionStringSection = builder.Configuration.GetSection(ConnectionStringsSectionName);
+builder.Services.AddOptions<ConnectionStringsOptions>().Bind(connectionStringSection);
 
 builder.Services.ConfigureHttpJsonOptions(options =>
 {
@@ -29,9 +30,9 @@ builder.Services.AddOutputCache(options =>
 });
 builder.Services.AddDistributedPostgreSqlCache(options =>
 {
-    var opts = connectionStringSection.Get<ConnectionStringsOptions>();
+    var main = connectionStringSection.GetValue<string>(nameof(ConnectionStringsOptions.Main));
 
-    options.ConnectionString = opts?.Main;
+    options.ConnectionString = main;
     options.SchemaName = "cache";
     options.TableName = "sitenexusmods_cache";
     options.CreateInfrastructure = true;
