@@ -65,6 +65,7 @@ if (otlpSection.Get<OtlpOptions>() is { } otlpOptions)
     if (!string.IsNullOrEmpty(otlpOptions.MetricsEndpoint))
     {
         openTelemetry.WithMetrics(b => b
+            .AddProcessInstrumentation()
             .AddRuntimeInstrumentation(instrumentationOptions =>
             {
 
