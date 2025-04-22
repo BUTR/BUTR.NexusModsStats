@@ -1,4 +1,4 @@
-﻿FROM --platform=$BUILDPLATFORM mcr.microsoft.com/dotnet/sdk:9.0-alpine AS restore
+﻿FROM --platform=$TARGETPLATFORM mcr.microsoft.com/dotnet/sdk:9.0-alpine AS restore
 ARG TARGETARCH
 ENV RUNTIME_IDENTIFIER=linux-musl-${TARGETARCH}
 WORKDIR /build
