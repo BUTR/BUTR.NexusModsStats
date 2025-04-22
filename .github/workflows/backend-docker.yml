@@ -50,7 +50,7 @@ jobs:
       with:
         builder: ${{ steps.buildx.outputs.name }}
         context: ./
-        file: ./src/BUTR.NexusModsStats/Dockerfile
+        file: ./nmstats.Dockerfile
         platforms: linux/amd64,linux/arm64
         push: true
         tags: ghcr.io/butr/nmstats:latest

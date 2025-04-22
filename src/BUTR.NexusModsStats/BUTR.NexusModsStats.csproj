@@ -23,6 +23,9 @@
     <Content Include="..\..\.dockerignore">
       <Link>.dockerignore</Link>
     </Content>
+    <Content Include="..\..\nmstats.Dockerfile">
+      <Link>Dockerfile</Link>
+    </Content>
   </ItemGroup>
 
   <ItemGroup>
