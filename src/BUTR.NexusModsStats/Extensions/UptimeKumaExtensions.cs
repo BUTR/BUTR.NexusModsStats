@@ -22,7 +22,8 @@ public static partial class UptimeKumaExtensions
         {
             var options = sp.GetRequiredService<IOptions<UptimeKumaOptions>>().Value;
             
-            client.BaseAddress = new Uri(options.Endpoint);
+            if (Uri.TryCreate(options.Endpoint, UriKind.Absolute, out var uri))
+                client.BaseAddress = uri;
             client.DefaultRequestHeaders.Add("User-Agent", userAgent);
         });
         builder.Services.AddHttpClient<NexusModsApiHealthCheck>().ConfigureHttpClient((_, client) =>
@@ -47,6 +48,9 @@ public static partial class UptimeKumaExtensions
 
         public async Task PublishAsync(HealthReport report, CancellationToken ct)
         {
+            if (_httpClient.BaseAddress is null)
+                return;
+
             var response = await _httpClient.GetAsync($"?status={(report.Status == HealthStatus.Healthy ? "up" : "down")}&msg={Uri.EscapeDataString(report.Status.ToString())}&ping={report.TotalDuration.TotalMilliseconds.ToString(CultureInfo.InvariantCulture)}", ct);
             response.EnsureSuccessStatusCode();
         }
