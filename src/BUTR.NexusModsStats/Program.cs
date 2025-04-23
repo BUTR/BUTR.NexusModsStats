@@ -9,19 +9,22 @@ using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
 
-const string ConnectionStringsSectionName = "ConnectionStrings";
-const string NexusModsSectionName = "NexusMods";
-const string OtlpSectionName = "Otlp";
-
 var builder = WebApplication.CreateSlimBuilder(args);
 
+const string ConnectionStringsSectionName = "ConnectionStrings";
 var connectionStringSection = builder.Configuration.GetSection(ConnectionStringsSectionName);
 builder.Services.Configure<ConnectionStringsOptions>(connectionStringSection);
 
+const string NexusModsSectionName = "NexusMods";
 var nexusModsSectionNameSection = builder.Configuration.GetSection(NexusModsSectionName);
 builder.Services.Configure<NexusModsOptions>(nexusModsSectionNameSection);
 
+const string OtlpSectionName = "Otlp";
 var otlpSection = builder.Configuration.GetSection(OtlpSectionName);
+
+const string UptimeKumaSectionName = "UptimeKuma";
+var uptimeKumaSection = builder.Configuration.GetSection(UptimeKumaSectionName);
+builder.Services.Configure<UptimeKumaOptions>(uptimeKumaSection);
 
 builder.Services.ConfigureHttpJsonOptions(options =>
 {
@@ -118,6 +121,7 @@ if (otlpSection.Get<OtlpOptions>() is { } otlpOptions)
 var app = builder
     .AddDownloadsEndpoint()
     .AddModVersionEndpoint()
+    .AddUptimeKuma()
     .Build()
     .UseEndpointDefinitions();
 
