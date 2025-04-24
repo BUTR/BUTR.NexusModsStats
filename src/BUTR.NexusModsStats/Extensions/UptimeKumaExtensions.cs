@@ -51,7 +51,16 @@ public static partial class UptimeKumaExtensions
             if (_httpClient.BaseAddress is null)
                 return;
 
-            var response = await _httpClient.GetAsync($"?status={(report.Status == HealthStatus.Healthy ? "up" : "down")}&msg={Uri.EscapeDataString(report.Status.ToString())}&ping={report.TotalDuration.TotalMilliseconds.ToString(CultureInfo.InvariantCulture)}", ct);
+            var status = report.Status switch
+            {
+                HealthStatus.Unhealthy => "down",
+                HealthStatus.Degraded => "pending",
+                HealthStatus.Healthy => "up",
+                _ => throw new ArgumentOutOfRangeException(),
+            };
+            var message = string.Join(", ", report.Entries.Select(x => $"{x.Key} - {x.Value.Description}"));
+            var ping = report.TotalDuration.TotalMilliseconds.ToString(CultureInfo.InvariantCulture);
+            var response = await _httpClient.GetAsync($"?status={status}&msg={Uri.EscapeDataString(message)}&ping={ping}", ct);
             response.EnsureSuccessStatusCode();
         }
     }
@@ -114,7 +123,7 @@ public static partial class UptimeKumaExtensions
                 return HealthCheckResult.Unhealthy("NexusMods API Status not available");
 
             if (apiComponent.status != "operational")
-                return HealthCheckResult.Unhealthy($"NexusMods API Status is {apiComponent.status}");
+                return HealthCheckResult.Degraded($"NexusMods API Status is {apiComponent.status}");
 
             return HealthCheckResult.Healthy();
         }
