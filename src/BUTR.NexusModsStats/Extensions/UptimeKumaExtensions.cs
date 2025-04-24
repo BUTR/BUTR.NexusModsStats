@@ -21,7 +21,7 @@ public static partial class UptimeKumaExtensions
         builder.Services.AddHttpClient<IHealthCheckPublisher, UptimeKumaHealthCheckPublisher>().ConfigureHttpClient((sp, client) =>
         {
             var options = sp.GetRequiredService<IOptions<UptimeKumaOptions>>().Value;
-            
+
             if (Uri.TryCreate(options.Endpoint, UriKind.Absolute, out var uri))
                 client.BaseAddress = uri;
             client.DefaultRequestHeaders.Add("User-Agent", userAgent);
@@ -30,6 +30,7 @@ public static partial class UptimeKumaExtensions
         {
             client.BaseAddress = new Uri("https://nexusmods.statuspage.io/");
             client.DefaultRequestHeaders.Add("User-Agent", userAgent);
+            client.Timeout = TimeSpan.FromSeconds(3);
         });
         builder.Services.AddHealthChecks()
             .AddCheck<NexusModsApiHealthCheck>("NexusModsApi");
@@ -64,7 +65,7 @@ public static partial class UptimeKumaExtensions
             response.EnsureSuccessStatusCode();
         }
     }
-    
+
     public class UptimeKumaEndpointDefinition : IEndpointDefinition
     {
         public void RegisterEndpoints(WebApplication app)
@@ -72,13 +73,13 @@ public static partial class UptimeKumaExtensions
             app.MapHealthChecks("/healthz");
         }
     }
-    
+
     public partial class NexusModsApiHealthCheck : IHealthCheck
     {
         [JsonSerializable(typeof(Components))]
         [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase)]
         public partial class NexusModsStatusJsonSerializerContext : JsonSerializerContext;
-        
+
         public record Component(
             [property: JsonPropertyName("id")] string id,
             [property: JsonPropertyName("name")] string name,
@@ -107,14 +108,14 @@ public static partial class UptimeKumaExtensions
             [property: JsonPropertyName("page")] Page page,
             [property: JsonPropertyName("components")] IReadOnlyList<Component> components
         );
-        
+
         private readonly HttpClient _httpClient;
 
         public NexusModsApiHealthCheck(HttpClient httpClient)
         {
             _httpClient = httpClient;
         }
-        
+
         public async Task<HealthCheckResult> CheckHealthAsync(HealthCheckContext context, CancellationToken ct = default)
         {
             var response = await _httpClient.GetFromJsonAsync("api/v2/components.json", NexusModsStatusJsonSerializerContext.Default.Components, ct);

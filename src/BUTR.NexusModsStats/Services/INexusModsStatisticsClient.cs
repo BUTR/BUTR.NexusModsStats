@@ -16,11 +16,13 @@ public interface INexusModsStatisticsClient
 
 public sealed class NexusModsStatisticsClient : INexusModsStatisticsClient
 {
+    private readonly ILogger _logger;
     private readonly HttpClient _httpClient;
     private readonly ConcurrentDictionary<string, SemaphoreSlim> _locks = new();
 
-    public NexusModsStatisticsClient(HttpClient httpClient)
+    public NexusModsStatisticsClient(ILogger<NexusModsStatisticsClient> logger, HttpClient httpClient)
     {
+        _logger = logger;
         _httpClient = httpClient;
     }
 
@@ -41,8 +43,9 @@ public sealed class NexusModsStatisticsClient : INexusModsStatisticsClient
 
             responseStream = composableDispose.Add(await response.Content.ReadAsStreamAsync(ct));
         }
-        catch (Exception)
+        catch (Exception e)
         {
+            _logger.LogError(e, "Failed to get live download counts");
             yield break;
         }
         finally

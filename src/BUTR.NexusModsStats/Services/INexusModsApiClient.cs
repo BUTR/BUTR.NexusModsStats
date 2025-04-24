@@ -22,14 +22,16 @@ public interface INexusModsApiClient
 
 public sealed partial class NexusModsApiClient : INexusModsApiClient
 {
+    private readonly ILogger _logger;
     private readonly HttpClient _httpClient;
     private readonly IDistributedCache _cache;
     private readonly NexusModsOptions _options;
     private readonly DistributedCacheEntryOptions _expiration = new() { AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(5) };
     private readonly ConcurrentDictionary<string, SemaphoreSlim> _locks = new();
 
-    public NexusModsApiClient(HttpClient httpClient, IDistributedCache cache, IOptionsSnapshot<NexusModsOptions> options)
+    public NexusModsApiClient(ILogger<NexusModsApiClient> logger, HttpClient httpClient, IDistributedCache cache, IOptionsSnapshot<NexusModsOptions> options)
     {
+        _logger = logger;
         _httpClient = httpClient;
         _cache = cache;
         _options = options.Value;
@@ -51,6 +53,7 @@ public sealed partial class NexusModsApiClient : INexusModsApiClient
             NexusModsApiClientJsonSerializerContext.Default.NexusModsModInfoResponse, ct);
     }
 
+
     private async Task<TResponse?> GetCachedWithTimeLimitAsync<TResponse>(string url, string apiKey, JsonTypeInfo<TResponse?> typeInfo, CancellationToken ct) where TResponse : class?
     {
         var apiKeyKey = HashString(apiKey);
@@ -58,42 +61,73 @@ public sealed partial class NexusModsApiClient : INexusModsApiClient
 
         var semaphore = _locks.GetOrAdd(key, _ => new SemaphoreSlim(1, 1));
 
+        string? cachedJson = null;
+        TResponse? cachedValue = null;
+
         try
         {
-            if (await _cache.GetStringAsync(key, token: ct) is { } json)
+            cachedJson = await _cache.GetStringAsync(key, token: ct);
+            if (cachedJson is not null)
             {
                 if (typeof(TResponse) == typeof(string))
-                    return Unsafe.As<TResponse>(json);
+                    return Unsafe.As<TResponse>(cachedJson);
 
-                return JsonSerializer.Deserialize(json, typeInfo);
+                cachedValue = JsonSerializer.Deserialize(cachedJson, typeInfo);
             }
 
-            try
+            await semaphore.WaitAsync(ct);
+
+            // Another thread might have updated the cache, so check again
+            var freshCachedJson = await _cache.GetStringAsync(key, token: ct);
+            if (freshCachedJson is not null && freshCachedJson != cachedJson)
             {
-                await semaphore.WaitAsync(ct);
-
-                using var request = new HttpRequestMessage(HttpMethod.Get, url);
-                request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
-                using var response = await _httpClient.SendAsync(request, ct);
-                if (!response.IsSuccessStatusCode) return null;
-
-                json = await response.Content.ReadAsStringAsync(ct);
-                await _cache.SetStringAsync(key, json, _expiration, token: ct);
-
                 if (typeof(TResponse) == typeof(string))
-                    return Unsafe.As<TResponse>(json);
+                    return Unsafe.As<TResponse>(freshCachedJson);
 
-                return JsonSerializer.Deserialize(json, typeInfo);
+                return JsonSerializer.Deserialize(freshCachedJson, typeInfo);
             }
-            finally
+
+            using var request = new HttpRequestMessage(HttpMethod.Get, url);
+            request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+            var response = await _httpClient.SendAsync(request, ct);
+
+            if (!response.IsSuccessStatusCode)
             {
-                semaphore.Release();
+                // Prolong TTL if we have a cached value
+                if (cachedJson is not null)
+                    await _cache.SetStringAsync(key, cachedJson, _expiration, token: ct);
+
+                return cachedValue;
             }
+
+            var newJson = await response.Content.ReadAsStringAsync(ct);
+
+            // Avoid deserialization if value is the same
+            if (newJson == cachedJson)
+            {
+                await _cache.SetStringAsync(key, cachedJson, _expiration, token: ct);
+                return cachedValue;
+            }
+
+            await _cache.SetStringAsync(key, newJson, _expiration, token: ct);
+
+            if (typeof(TResponse) == typeof(string))
+                return Unsafe.As<TResponse>(newJson);
+
+            return JsonSerializer.Deserialize(newJson, typeInfo);
         }
-        catch (Exception)
+        catch (Exception e)
         {
-            await _cache.RemoveAsync(key, ct);
-            return null;
+            _logger.LogError(e, "Failed to get Nexus Mods API response");
+
+            if (cachedJson is not null)
+                await _cache.SetStringAsync(key, cachedJson, _expiration, token: ct);
+
+            return cachedValue;
+        }
+        finally
+        {
+            semaphore.Release();
         }
     }
 

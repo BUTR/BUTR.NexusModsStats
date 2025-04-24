@@ -1,4 +1,4 @@
-namespace BUTR.NexusModsStats.Options;
+﻿namespace BUTR.NexusModsStats.Options;
 
 public sealed record UptimeKumaOptions
 {
