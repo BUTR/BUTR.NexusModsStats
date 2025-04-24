@@ -34,7 +34,10 @@ builder.Services.AddOutputCache(options =>
 {
     options.AddBasePolicy(x => x.Expire(TimeSpan.FromSeconds(60)));
 });
-builder.Services.AddDistributedMemoryCache();
+builder.Services.AddStackExchangeRedisCache(options =>
+{
+    options.Configuration = builder.Configuration.GetConnectionString("Cache");
+});
 /*
 builder.Services.AddDistributedPostgreSqlCache(options =>
 {

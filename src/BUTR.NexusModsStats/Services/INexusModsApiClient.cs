@@ -61,12 +61,12 @@ public sealed partial class NexusModsApiClient : INexusModsApiClient
 
         var semaphore = _locks.GetOrAdd(key, _ => new SemaphoreSlim(1, 1));
 
-        string? cachedJson = null;
-        TResponse? cachedValue = null;
+        var cachedJson = default(string?);
+        var cachedValue = default(TResponse?);
 
         try
         {
-            cachedJson = await _cache.GetStringAsync(key, token: ct);
+            cachedJson = await _cache.GetStringAsync(key, ct);
             if (cachedJson is not null)
             {
                 if (typeof(TResponse) == typeof(string))
@@ -78,7 +78,7 @@ public sealed partial class NexusModsApiClient : INexusModsApiClient
             await semaphore.WaitAsync(ct);
 
             // Another thread might have updated the cache, so check again
-            var freshCachedJson = await _cache.GetStringAsync(key, token: ct);
+            var freshCachedJson = await _cache.GetStringAsync(key, ct);
             if (freshCachedJson is not null && freshCachedJson != cachedJson)
             {
                 if (typeof(TResponse) == typeof(string))
@@ -95,7 +95,7 @@ public sealed partial class NexusModsApiClient : INexusModsApiClient
             {
                 // Prolong TTL if we have a cached value
                 if (cachedJson is not null)
-                    await _cache.SetStringAsync(key, cachedJson, _expiration, token: ct);
+                    await _cache.SetStringAsync(key, cachedJson, _expiration, ct);
 
                 return cachedValue;
             }
@@ -105,11 +105,11 @@ public sealed partial class NexusModsApiClient : INexusModsApiClient
             // Avoid deserialization if value is the same
             if (newJson == cachedJson)
             {
-                await _cache.SetStringAsync(key, cachedJson, _expiration, token: ct);
+                await _cache.SetStringAsync(key, cachedJson, _expiration, ct);
                 return cachedValue;
             }
 
-            await _cache.SetStringAsync(key, newJson, _expiration, token: ct);
+            await _cache.SetStringAsync(key, newJson, _expiration, ct);
 
             if (typeof(TResponse) == typeof(string))
                 return Unsafe.As<TResponse>(newJson);
@@ -121,7 +121,7 @@ public sealed partial class NexusModsApiClient : INexusModsApiClient
             _logger.LogError(e, "Failed to get Nexus Mods API response");
 
             if (cachedJson is not null)
-                await _cache.SetStringAsync(key, cachedJson, _expiration, token: ct);
+                await _cache.SetStringAsync(key, cachedJson, _expiration, ct);
 
             return cachedValue;
         }
