@@ -1,6 +1,8 @@
 ﻿using BUTR.NexusModsStats.Options;
 using BUTR.NexusModsStats.Services;
+using BUTR.NexusModsStats.Utils;
 
+using Microsoft.Extensions.Caching.Distributed;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Options;
@@ -14,9 +16,6 @@ public static partial class UptimeKumaExtensions
 {
     public static WebApplicationBuilder AddUptimeKuma(this WebApplicationBuilder builder)
     {
-        var assemblyName = typeof(DownloadsExtensions).Assembly.GetName();
-        var userAgent = $"{assemblyName.Name ?? "ERROR"} v{assemblyName.Version?.ToString() ?? "ERROR"} (github.com/BUTR)";
-
         builder.Services.TryAddEnumerable(ServiceDescriptor.Singleton<IEndpointDefinition, UptimeKumaEndpointDefinition>());
         builder.Services.AddHttpClient<IHealthCheckPublisher, UptimeKumaHealthCheckPublisher>().ConfigureHttpClient((sp, client) =>
         {
@@ -24,16 +23,17 @@ public static partial class UptimeKumaExtensions
 
             if (Uri.TryCreate(options.Endpoint, UriKind.Absolute, out var uri))
                 client.BaseAddress = uri;
-            client.DefaultRequestHeaders.Add("User-Agent", userAgent);
+            client.DefaultRequestHeaders.Add("User-Agent", HttpUtils.UserAgent);
         });
         builder.Services.AddHttpClient<NexusModsApiHealthCheck>().ConfigureHttpClient((_, client) =>
         {
             client.BaseAddress = new Uri("https://nexusmods.statuspage.io/");
-            client.DefaultRequestHeaders.Add("User-Agent", userAgent);
+            client.DefaultRequestHeaders.Add("User-Agent", HttpUtils.UserAgent);
             client.Timeout = TimeSpan.FromSeconds(3);
         });
         builder.Services.AddHealthChecks()
-            .AddCheck<NexusModsApiHealthCheck>("NexusModsApi");
+            .AddCheck<NexusModsApiHealthCheck>("NexusModsApi")
+            .AddCheck<DistributedCacheHealthCheck>("Cache");
 
         return builder;
     }
@@ -74,39 +74,45 @@ public static partial class UptimeKumaExtensions
         }
     }
 
+    public sealed class DistributedCacheHealthCheck : IHealthCheck
+    {
+        private static readonly DistributedCacheEntryOptions Expiration = new() { AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(1) };
+
+        private readonly IDistributedCache _cache;
+
+        public DistributedCacheHealthCheck(IDistributedCache cache)
+        {
+            _cache = cache;
+        }
+
+        public async Task<HealthCheckResult> CheckHealthAsync(HealthCheckContext context, CancellationToken ct = default)
+        {
+            try
+            {
+                await _cache.SetStringAsync("healthz", "ok", Expiration, ct);
+                return HealthCheckResult.Healthy();
+            }
+            catch (Exception e)
+            {
+                return HealthCheckResult.Unhealthy("Distributed cache is not available", e);
+            }
+        }
+    }
+
     public partial class NexusModsApiHealthCheck : IHealthCheck
     {
         [JsonSerializable(typeof(Components))]
-        [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase)]
         public partial class NexusModsStatusJsonSerializerContext : JsonSerializerContext;
 
+        // Only the fields that are actually used are declared - extra JSON properties are ignored,
+        // and loosely-typed members (e.g. 'object group_id') would break AOT serialization
         public record Component(
-            [property: JsonPropertyName("id")] string id,
-            [property: JsonPropertyName("name")] string name,
-            [property: JsonPropertyName("status")] string status,
-            [property: JsonPropertyName("created_at")] DateTime created_at,
-            [property: JsonPropertyName("updated_at")] DateTime updated_at,
-            [property: JsonPropertyName("position")] int position,
-            [property: JsonPropertyName("description")] string description,
-            [property: JsonPropertyName("showcase")] bool showcase,
-            [property: JsonPropertyName("start_date")] string start_date,
-            [property: JsonPropertyName("group_id")] object group_id,
-            [property: JsonPropertyName("page_id")] string page_id,
-            [property: JsonPropertyName("group")] bool group,
-            [property: JsonPropertyName("only_show_if_degraded")] bool only_show_if_degraded
-        );
-
-        public record Page(
-            [property: JsonPropertyName("id")] string id,
-            [property: JsonPropertyName("name")] string name,
-            [property: JsonPropertyName("url")] string url,
-            [property: JsonPropertyName("time_zone")] string time_zone,
-            [property: JsonPropertyName("updated_at")] DateTime updated_at
+            [property: JsonPropertyName("name")] string Name,
+            [property: JsonPropertyName("status")] string Status
         );
 
         public record Components(
-            [property: JsonPropertyName("page")] Page page,
-            [property: JsonPropertyName("components")] IReadOnlyList<Component> components
+            [property: JsonPropertyName("components")] IReadOnlyList<Component> ComponentList
         );
 
         private readonly HttpClient _httpClient;
@@ -118,15 +124,22 @@ public static partial class UptimeKumaExtensions
 
         public async Task<HealthCheckResult> CheckHealthAsync(HealthCheckContext context, CancellationToken ct = default)
         {
-            var response = await _httpClient.GetFromJsonAsync("api/v2/components.json", NexusModsStatusJsonSerializerContext.Default.Components, ct);
-            var apiComponent = response?.components.FirstOrDefault(x => x.name == "API");
-            if (apiComponent is null)
-                return HealthCheckResult.Unhealthy("NexusMods API Status not available");
+            try
+            {
+                var response = await _httpClient.GetFromJsonAsync("api/v2/components.json", NexusModsStatusJsonSerializerContext.Default.Components, ct);
+                var apiComponent = response?.ComponentList.FirstOrDefault(x => x.Name == "API");
+                if (apiComponent is null)
+                    return HealthCheckResult.Unhealthy("NexusMods API Status not available");
 
-            if (apiComponent.status != "operational")
-                return HealthCheckResult.Degraded($"NexusMods API Status is {apiComponent.status}");
+                if (apiComponent.Status != "operational")
+                    return HealthCheckResult.Degraded($"NexusMods API Status is {apiComponent.Status}");
 
-            return HealthCheckResult.Healthy();
+                return HealthCheckResult.Healthy();
+            }
+            catch (Exception e) when (e is not OperationCanceledException || !ct.IsCancellationRequested)
+            {
+                return HealthCheckResult.Unhealthy("NexusMods API Status not available", e);
+            }
         }
     }
 }

@@ -11,14 +11,11 @@ public static class ModVersionExtensions
 {
     public static WebApplicationBuilder AddModVersionEndpoint(this WebApplicationBuilder builder)
     {
-        var assemblyName = typeof(ModVersionExtensions).Assembly.GetName();
-        var userAgent = $"{assemblyName.Name ?? "ERROR"} v{assemblyName.Version?.ToString() ?? "ERROR"} (github.com/BUTR)";
-
         builder.Services.TryAddEnumerable(ServiceDescriptor.Singleton<IEndpointDefinition, ModVersionShieldsEndpointDefinition>());
         builder.Services.AddHttpClient<INexusModsApiClient, NexusModsApiClient>().ConfigureHttpClient((_, client) =>
         {
             client.BaseAddress = new Uri("https://api.nexusmods.com/");
-            client.DefaultRequestHeaders.Add("User-Agent", userAgent);
+            client.DefaultRequestHeaders.Add("User-Agent", HttpUtils.UserAgent);
         }).AddHttpMessageHandler<NexusModsAuthorizationHandler>().AddNexusModsResilienceHandler();
         builder.Services.AddTransient<NexusModsAuthorizationHandler>();
 
@@ -29,14 +26,14 @@ public static class ModVersionExtensions
     {
         public void RegisterEndpoints(WebApplication app)
         {
-            app.MapGet("/mod-version", async (
+            app.MapGet("/mod-version", static async (
                 [FromQuery] string gameId,
                 [FromQuery] string modId,
                 [FromServices] INexusModsApiClient apiClient,
                 CancellationToken ct) =>
             {
-                if (string.IsNullOrWhiteSpace(gameId) || string.IsNullOrWhiteSpace(modId))
-                    return Results.Ok(ShieldsResponseBody.Error("Version", "Invalid 'gameId' or 'modId'!"));
+                if (!RequestValidation.IsValidId(gameId) || !RequestValidation.IsValidId(modId))
+                    return ShieldsResponseBody.Error("Version", "Invalid 'gameId' or 'modId'!");
 
                 var response = await apiClient.GetModAsync(gameId, modId, ct);
 

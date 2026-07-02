@@ -1,4 +1,4 @@
-﻿FROM --platform=$TARGETPLATFORM mcr.microsoft.com/dotnet/sdk:10.0-preview-noble-aot AS restore
+﻿FROM --platform=$TARGETPLATFORM mcr.microsoft.com/dotnet/sdk:10.0-noble-aot AS restore
 ARG TARGETARCH
 ENV RUNTIME_IDENTIFIER=linux-${TARGETARCH}
 WORKDIR /build
@@ -22,7 +22,7 @@ RUN dotnet publish "src/BUTR.NexusModsStats/BUTR.NexusModsStats.csproj" -c Relea
 
 RUN upx --best --lzma /app/publish/BUTR.NexusModsStats || echo "UPX failed, continuing"
 
-FROM mcr.microsoft.com/dotnet/runtime-deps:9.0-noble-chiseled AS final
+FROM mcr.microsoft.com/dotnet/runtime-deps:10.0-noble-chiseled AS final
 WORKDIR /app
 
 COPY --from=publish /app/publish /app

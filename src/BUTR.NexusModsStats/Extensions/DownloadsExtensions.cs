@@ -1,5 +1,6 @@
 ﻿using BUTR.NexusModsStats.Models;
 using BUTR.NexusModsStats.Services;
+using BUTR.NexusModsStats.Utils;
 
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.DependencyInjection.Extensions;
@@ -10,14 +11,11 @@ public static class DownloadsExtensions
 {
     public static WebApplicationBuilder AddDownloadsEndpoint(this WebApplicationBuilder builder)
     {
-        var assemblyName = typeof(DownloadsExtensions).Assembly.GetName();
-        var userAgent = $"{assemblyName.Name ?? "ERROR"} v{assemblyName.Version?.ToString() ?? "ERROR"} (github.com/BUTR)";
-
         builder.Services.TryAddEnumerable(ServiceDescriptor.Singleton<IEndpointDefinition, DownloadsEndpointDefinition>());
         builder.Services.AddHttpClient<INexusModsStatisticsClient, NexusModsStatisticsClient>().ConfigureHttpClient((_, client) =>
         {
             client.BaseAddress = new Uri("https://staticstats.nexusmods.com/");
-            client.DefaultRequestHeaders.Add("User-Agent", userAgent);
+            client.DefaultRequestHeaders.Add("User-Agent", HttpUtils.UserAgent);
         }).AddCustomResilienceHandler();
         return builder;
     }
@@ -31,8 +29,8 @@ public static class DownloadsExtensions
                 [FromServices] INexusModsStatisticsClient client,
                 CancellationToken ct) =>
             {
-                if (string.IsNullOrEmpty(type) || string.IsNullOrEmpty(gameId) || string.IsNullOrEmpty(modId))
-                    return ShieldsResponseBody.Error("", "Missing required query parameters!");
+                if (!RequestValidation.IsValidId(gameId) || !RequestValidation.IsValidId(modId))
+                    return ShieldsResponseBody.Error("", "Invalid 'gameId' or 'modId'!");
 
                 var label = type switch
                 {
@@ -45,7 +43,7 @@ public static class DownloadsExtensions
                 if (string.IsNullOrEmpty(label))
                     return ShieldsResponseBody.Error("", "Unknown type!");
 
-                var download = await client.GetLiveDownloadCountsAsync(gameId, ct).FirstOrDefaultAsync(x => x.Id == modId, ct);
+                var download = await client.GetLiveDownloadCountsAsync(gameId, modId, ct);
                 if (download is null)
                     return ShieldsResponseBody.Error(label, "mod not found!");
 

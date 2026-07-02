@@ -2,6 +2,8 @@
 using BUTR.NexusModsStats.Options;
 using BUTR.NexusModsStats.Utils;
 
+using Community.Microsoft.Extensions.Caching.PostgreSql;
+
 using Npgsql;
 
 using OpenTelemetry.Logs;
@@ -34,21 +36,22 @@ builder.Services.AddOutputCache(options =>
 {
     options.AddBasePolicy(x => x.Expire(TimeSpan.FromSeconds(60)));
 });
-builder.Services.AddStackExchangeRedisCache(options =>
+if (connectionStringSection.GetValue<string>(nameof(ConnectionStringsOptions.Main)) is { Length: > 0 } mainConnectionString)
 {
-    options.Configuration = builder.Configuration.GetConnectionString("Cache");
-});
-/*
-builder.Services.AddDistributedPostgreSqlCache(options =>
+    builder.Services.AddDistributedPostgreSqlCache(options =>
+    {
+        options.ConnectionString = mainConnectionString;
+        options.SchemaName = "cache";
+        options.TableName = "sitenexusmods_cache";
+        options.CreateInfrastructure = true;
+    });
+}
+else
 {
-    var main = connectionStringSection.GetValue<string>(nameof(ConnectionStringsOptions.Main));
-
-    options.ConnectionString = main;
-    options.SchemaName = "cache";
-    options.TableName = "sitenexusmods_cache";
-    options.CreateInfrastructure = true;
-});
-*/
+    // No database configured (e.g. local development) - fall back to an in-process cache
+    builder.Services.AddDistributedMemoryCache();
+}
+builder.Services.AddSingleton<StripedAsyncLock>();
 
 var openTelemetry = builder.Services.AddOpenTelemetry()
     .WithMetrics()
@@ -72,10 +75,7 @@ if (otlpSection.Get<OtlpOptions>() is { } otlpOptions)
     {
         openTelemetry.WithMetrics(b => b
             .AddProcessInstrumentation()
-            .AddRuntimeInstrumentation(instrumentationOptions =>
-            {
-
-            })
+            .AddRuntimeInstrumentation()
             .AddHttpClientInstrumentation()
             .AddAspNetCoreInstrumentation()
             .AddOtlpExporter(o =>
@@ -106,7 +106,6 @@ if (otlpSection.Get<OtlpOptions>() is { } otlpOptions)
 
     if (!string.IsNullOrEmpty(otlpOptions.LoggingEndpoint))
     {
-
         builder.Logging.AddOpenTelemetry(o =>
         {
             o.IncludeScopes = true;
@@ -125,7 +124,9 @@ var app = builder
     .AddDownloadsEndpoint()
     .AddModVersionEndpoint()
     .AddUptimeKuma()
-    .Build()
-    .UseEndpointDefinitions();
+    .Build();
+
+app.UseOutputCache();
+app.UseEndpointDefinitions();
 
 app.Run();

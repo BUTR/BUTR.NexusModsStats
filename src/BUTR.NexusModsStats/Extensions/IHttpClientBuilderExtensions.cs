@@ -9,40 +9,52 @@ namespace BUTR.NexusModsStats.Extensions;
 
 public static class IHttpClientBuilderExtensions
 {
+    /// <summary>
+    /// The standard retry strategy plus a delay generator that honors the NexusMods rate-limit reset headers.
+    /// </summary>
     public static IHttpStandardResiliencePipelineBuilder AddNexusModsResilienceHandler(this IHttpClientBuilder builder) => builder.AddStandardResilienceHandler(options =>
     {
-        options.Retry = new HttpRetryStrategyOptions
+        options.Retry = CreateRetryOptions();
+        options.Retry.DelayGenerator = static args =>
         {
-            MaxRetryAttempts = 5,
-            BackoffType = DelayBackoffType.Exponential,
-            UseJitter = true,
-            Delay = TimeSpan.FromSeconds(1),
+            if (args.Outcome.Result is not { StatusCode: HttpStatusCode.TooManyRequests } response)
+                return ValueTask.FromResult<TimeSpan?>(null);
 
-            ShouldHandle = new PredicateBuilder<HttpResponseMessage>()
-                .Handle<HttpRequestException>()
-                .HandleResult(response => response.StatusCode
-                    is >= HttpStatusCode.InternalServerError
-                    or HttpStatusCode.RequestTimeout
-                    or HttpStatusCode.TooManyRequests
-                ),
+            var delay = IsQuotaExhausted(response.Headers, "X-RL-Daily-Remaining")
+                ? GetRateLimitDelay(response.Headers, "X-RL-Hourly-Remaining", "X-RL-Hourly-Reset", TimeSpan.FromHours(1)) ?? TimeSpan.FromSeconds(1)
+                : TimeSpan.FromSeconds(1);
 
-            DelayGenerator = static args =>
-            {
-                if (args.Outcome.Result is not { StatusCode: HttpStatusCode.TooManyRequests } response)
-                    return ValueTask.FromResult<TimeSpan?>(null);
-
-                var delay = GetRateLimitDelay(response.Headers, "X-RL-Daily-Remaining", "X-RL-Daily-Reset", TimeSpan.FromDays(1)) ??
-                            GetRateLimitDelay(response.Headers, "X-RL-Hourly-Remaining", "X-RL-Hourly-Reset", TimeSpan.FromHours(1)) ??
-                            TimeSpan.FromSeconds(1);
-
-                return ValueTask.FromResult<TimeSpan?>(delay);
-            },
+            return ValueTask.FromResult<TimeSpan?>(delay);
         };
     });
 
+    public static IHttpStandardResiliencePipelineBuilder AddCustomResilienceHandler(this IHttpClientBuilder builder) => builder.AddStandardResilienceHandler(options =>
+    {
+        options.Retry = CreateRetryOptions();
+    });
+
+    private static HttpRetryStrategyOptions CreateRetryOptions() => new()
+    {
+        MaxRetryAttempts = 5,
+        BackoffType = DelayBackoffType.Exponential,
+        UseJitter = true,
+        Delay = TimeSpan.FromSeconds(1),
+
+        ShouldHandle = new PredicateBuilder<HttpResponseMessage>()
+            .Handle<HttpRequestException>()
+            .HandleResult(response => response.StatusCode
+                is >= HttpStatusCode.InternalServerError
+                or HttpStatusCode.RequestTimeout
+                or HttpStatusCode.TooManyRequests
+            ),
+    };
+
+    private static bool IsQuotaExhausted(HttpResponseHeaders headers, string remainingKey) =>
+        headers.TryGetValues(remainingKey, out var rem) && int.TryParse(rem.FirstOrDefault(), out var remVal) && remVal == 0;
+
     private static TimeSpan? GetRateLimitDelay(HttpResponseHeaders headers, string remainingKey, string resetKey, TimeSpan maxDelay)
     {
-        if (headers.TryGetValues(remainingKey, out var rem) && int.TryParse(rem.FirstOrDefault(), out var remVal) && remVal == 0 &&
+        if (IsQuotaExhausted(headers, remainingKey) &&
             headers.TryGetValues(resetKey, out var res) && DateTime.TryParse(res.FirstOrDefault(), out var resTime))
         {
             var delay = resTime - DateTime.UtcNow;
@@ -51,23 +63,4 @@ public static class IHttpClientBuilderExtensions
 
         return null;
     }
-
-    public static IHttpStandardResiliencePipelineBuilder AddCustomResilienceHandler(this IHttpClientBuilder builder) => builder.AddStandardResilienceHandler(options =>
-    {
-        options.Retry = new HttpRetryStrategyOptions
-        {
-            MaxRetryAttempts = 5,
-            BackoffType = DelayBackoffType.Exponential,
-            UseJitter = true,
-            Delay = TimeSpan.FromSeconds(1),
-
-            ShouldHandle = new PredicateBuilder<HttpResponseMessage>()
-                .Handle<HttpRequestException>()
-                .HandleResult(response => response.StatusCode
-                    is >= HttpStatusCode.InternalServerError
-                    or HttpStatusCode.RequestTimeout
-                    or HttpStatusCode.TooManyRequests
-                ),
-        };
-    });
 }

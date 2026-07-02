@@ -8,7 +8,7 @@ public sealed class NexusModsAuthorizationHandler : DelegatingHandler
 {
     private readonly NexusModsOptions _options;
 
-    public NexusModsAuthorizationHandler(IOptionsSnapshot<NexusModsOptions> options)
+    public NexusModsAuthorizationHandler(IOptions<NexusModsOptions> options)
     {
         _options = options.Value;
     }

@@ -1,66 +1,64 @@
 ﻿using BUTR.NexusModsStats.Models;
 using BUTR.NexusModsStats.Utils;
 
-using nietras.SeparatedValues;
+using Microsoft.Extensions.Caching.Distributed;
 
-using System.Collections.Concurrent;
-using System.Net.Http.Headers;
-using System.Runtime.CompilerServices;
+using nietras.SeparatedValues;
 
 namespace BUTR.NexusModsStats.Services;
 
 public interface INexusModsStatisticsClient
 {
-    IAsyncEnumerable<LiveStatisticsEntry> GetLiveDownloadCountsAsync(string gameId, CancellationToken ct);
+    Task<LiveStatisticsEntry?> GetLiveDownloadCountsAsync(string gameId, string modId, CancellationToken ct);
 }
 
 public sealed class NexusModsStatisticsClient : INexusModsStatisticsClient
 {
     private readonly ILogger _logger;
     private readonly HttpClient _httpClient;
-    private readonly ConcurrentDictionary<string, SemaphoreSlim> _locks = new();
+    private readonly IDistributedCache _cache;
+    private readonly StripedAsyncLock _locks;
 
-    public NexusModsStatisticsClient(ILogger<NexusModsStatisticsClient> logger, HttpClient httpClient)
+    public NexusModsStatisticsClient(ILogger<NexusModsStatisticsClient> logger, HttpClient httpClient, IDistributedCache cache, StripedAsyncLock locks)
     {
         _logger = logger;
         _httpClient = httpClient;
+        _cache = cache;
+        _locks = locks;
     }
 
-    public async IAsyncEnumerable<LiveStatisticsEntry> GetLiveDownloadCountsAsync(string gameId, [EnumeratorCancellation] CancellationToken ct)
+    public async Task<LiveStatisticsEntry?> GetLiveDownloadCountsAsync(string gameId, string modId, CancellationToken ct)
     {
-        using var composableDispose = new ComposableDisposable();
+        var url = $"live_download_counts/mods/{gameId}.csv";
 
-        var semaphore = _locks.GetOrAdd(gameId, _ => new SemaphoreSlim(1, 1));
-        Stream responseStream;
+        // The whole per-game CSV is cached so distinct mods of the same game share one upstream fetch
+        var csv = await _httpClient.GetStringWithCacheAsync(_cache, _locks, _logger, url, $"livestats:{gameId}", ct);
+        if (csv is null)
+            return null;
+
         try
         {
-            await semaphore.WaitAsync(ct);
+            // The CSV is raw data without a header row: "modId,totalDownloads,uniqueDownloads,totalViews"
+            using var reader = Sep.Reader(o => o with { HasHeader = false, Sep = Sep.New(',') }).FromText(csv);
+            foreach (var readRow in reader)
+            {
+                if (readRow.ColCount < 4 || !readRow[0].Span.SequenceEqual(modId))
+                    continue;
 
-            using var request = new HttpRequestMessage(HttpMethod.Get, $"live_download_counts/mods/{gameId}.csv");
-            request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
-            var response = composableDispose.Add(await _httpClient.SendAsync(request, ct));
-            if (!response.IsSuccessStatusCode) yield break;
+                if (int.TryParse(readRow[1].Span, out var totalDownloads) &&
+                    int.TryParse(readRow[2].Span, out var uniqueDownloads) &&
+                    int.TryParse(readRow[3].Span, out var totalViews))
+                    return new LiveStatisticsEntry(modId, totalDownloads, uniqueDownloads, totalViews);
 
-            responseStream = composableDispose.Add(await response.Content.ReadAsStreamAsync(ct));
+                _logger.LogWarning("Malformed live download counts row for game '{GameId}', mod '{ModId}'", gameId, modId);
+                return null;
+            }
         }
         catch (Exception e)
         {
-            _logger.LogError(e, "Failed to get live download counts");
-            yield break;
-        }
-        finally
-        {
-            semaphore.Release();
+            _logger.LogError(e, "Failed to parse live download counts for game '{GameId}'", gameId);
         }
 
-        using var reader = await Sep.Reader().FromAsync(responseStream, ct);
-        foreach (var readRow in reader)
-        {
-            var modId = readRow[0].Span.ToString();
-            var totalDownloads = readRow[1].Parse<int>();
-            var uniqueDownloads = readRow[2].Parse<int>();
-            var totalViews = readRow[3].Parse<int>();
-            yield return new LiveStatisticsEntry(modId, totalDownloads, uniqueDownloads, totalViews);
-        }
+        return null;
     }
 }
