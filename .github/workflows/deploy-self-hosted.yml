@@ -5,22 +5,215 @@ on:
     types:
       - deploy-docker-image
   workflow_dispatch:
+    inputs:
+      image_tag:
+        description: "Immutable image tag to deploy (e.g. sha-abc1234). 'latest' is rejected - it can't be verified by /version and is not a safe rollback target."
+        required: true
+
+concurrency:
+  group: deploy-self-hosted
+  cancel-in-progress: false
+
+env:
+  IMAGE: ghcr.io/butr/nmstats
+  HEALTH_URL: https://nmstats.butr.link/healthz
+  VERSION_URL: https://nmstats.butr.link/version
+  STACK: ${{ vars.DEPLOY_STACK }}
+  SERVICE: ${{ vars.DEPLOY_SERVICE }}
+  COMPOSE: ${{ vars.DEPLOY_COMPOSE }}
+  IMAGE_TAG: ${{ github.event.client_payload.image_tag || inputs.image_tag }}
+  STATE_DIR: /tmp/nmstats-deploy
 
 jobs:
   deploy:
     name: Deploy
     runs-on: ubuntu-latest
     environment:
-      name: 'self-hosted-backend'
-      url: 'https://nmstats.butr.link'
+      name: "self-hosted-backend"
+      url: "https://nmstats.butr.link"
     steps:
-    - name: multiple command
-      uses: appleboy/ssh-action@master
-      with:
-        host: ${{ secrets.HOST }}
-        username: ${{ secrets.USERNAME }}
-        password: ${{ secrets.PASSWORD }}
-        port: ${{ secrets.PORT }}
-        script: |
-          docker image pull ghcr.io/butr/nmstats;
-          docker stack deploy --prune --resolve-image always -c /deploy/nmstats/docker-compose.yml nmstats;
+      - name: Mask deploy topology in logs
+        timeout-minutes: 1
+        run: |
+          echo "::add-mask::${{ vars.DEPLOY_STACK }}"
+          echo "::add-mask::${{ vars.DEPLOY_SERVICE }}"
+          echo "::add-mask::${{ vars.DEPLOY_COMPOSE }}"
+
+      - name: Validate image tag
+        timeout-minutes: 1
+        run: |
+          set -euo pipefail
+
+          if [ -z "${IMAGE_TAG}" ] || [ "${IMAGE_TAG}" = "latest" ]; then
+            echo "::error::IMAGE_TAG must be an immutable tag (e.g. sha-abc1234); got '${IMAGE_TAG:-<empty>}'. 'latest' is rejected because /version cannot confirm it and it is not a safe rollback target."
+            exit 1
+          fi
+          echo "Deploying tag: ${IMAGE_TAG}"
+
+      - name: Pull image and capture rollback state
+        timeout-minutes: 10
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.HOST }}
+          username: ${{ secrets.USERNAME }}
+          password: ${{ secrets.PASSWORD }}
+          port: ${{ secrets.PORT }}
+          envs: IMAGE,SERVICE,IMAGE_TAG,STATE_DIR
+          script: |
+            set -eu
+
+            # Start from a clean slate so a previous deploy's stale state can never be read as this deploy's.
+            rm -rf "${STATE_DIR}"; mkdir -p "${STATE_DIR}"
+            echo "Deploying ${IMAGE}:${IMAGE_TAG}"
+            docker pull "${IMAGE}:${IMAGE_TAG}"
+
+            # Capture the EXACT currently-running image WITH its @sha256 digest, plus the replica count, as the
+            # rollback target. Pinning by digest makes rollback immune to tag movement - 'latest' (and even this
+            # commit's sha tag) may already point at the very build we're about to deploy.
+            OLD_IMAGE_REF="$(docker service inspect --format '{{.Spec.TaskTemplate.ContainerSpec.Image}}' "${SERVICE}" 2>/dev/null || true)"
+            OLD_REPLICAS="$(docker service inspect --format '{{.Spec.Mode.Replicated.Replicas}}' "${SERVICE}" 2>/dev/null || true)"
+            if [ -n "${OLD_IMAGE_REF}" ]; then
+              echo "${OLD_IMAGE_REF}" > "${STATE_DIR}/old_image_ref"
+              echo "${OLD_REPLICAS:-1}" > "${STATE_DIR}/old_replicas"
+              # Tag (no repo, no digest) is only used by the prune step's keep-list.
+              OLD_TAG="${OLD_IMAGE_REF%@*}"; OLD_TAG="${OLD_TAG##*:}"
+              echo "${OLD_TAG}" > "${STATE_DIR}/old_tag"
+              echo "Previous image: ${OLD_IMAGE_REF} (replicas ${OLD_REPLICAS:-1})"
+            else
+              echo "::warning::No running service found; automatic image rollback will be unavailable"
+            fi
+
+      - name: Deploy new tag
+        timeout-minutes: 5
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.HOST }}
+          username: ${{ secrets.USERNAME }}
+          password: ${{ secrets.PASSWORD }}
+          port: ${{ secrets.PORT }}
+          envs: STACK,COMPOSE,IMAGE_TAG,STATE_DIR
+          script: |
+            set -eu
+
+            # Marker: from here on the running deployment has been touched, so rollback is warranted on failure.
+            # If a step before this fails, the service is still healthy and rollback must NOT touch it.
+            touch "${STATE_DIR}/deploy_started"
+            IMAGE_TAG="${IMAGE_TAG}" docker stack deploy \
+              --resolve-image always --prune \
+              -c "${COMPOSE}" "${STACK}"
+
+      - name: Health check
+        timeout-minutes: 5
+        run: |
+          set -euo pipefail
+
+          for i in $(seq 1 30); do
+            if curl -fsS --max-time 5 "${HEALTH_URL}" >/dev/null; then
+              echo "Healthy after ${i} check(s)"; exit 0
+            fi
+            echo "Health check ${i}/30 not ready; waiting 5s"
+            sleep 5
+          done
+          echo "::error::Service did not become healthy"
+          exit 1
+
+      - name: Verify deployed version
+        timeout-minutes: 5
+        run: |
+          set -euo pipefail
+
+          for i in $(seq 1 30); do
+            LIVE="$(curl -fsS --max-time 5 "${VERSION_URL}" || true)"
+            echo "Attempt ${i}/30: /version -> '${LIVE:-<unreachable>}' (expected '${IMAGE_TAG}')"
+            if [ "${LIVE}" = "${IMAGE_TAG}" ]; then
+              echo "Confirmed live version: ${LIVE}"; exit 0
+            fi
+            sleep 5
+          done
+          echo "::error::Live /version never matched '${IMAGE_TAG}'"
+          exit 1
+
+      - name: Prune old service images
+        if: success()
+        timeout-minutes: 5
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.HOST }}
+          username: ${{ secrets.USERNAME }}
+          password: ${{ secrets.PASSWORD }}
+          port: ${{ secrets.PORT }}
+          envs: IMAGE,IMAGE_TAG,STATE_DIR
+          script: |
+            set -eu
+
+            OLD_TAG="$(cat "${STATE_DIR}/old_tag" 2>/dev/null || true)"
+            KEEP="${IMAGE_TAG} latest ${OLD_TAG}"
+            echo "Keeping tags: ${KEEP}"
+            docker images --format '{{.Repository}}:{{.Tag}}' \
+              | awk -v repo="${IMAGE}:" 'index($0, repo) == 1' \
+              | while read -r ref; do
+                  tag="${ref##*:}"
+                  keep=0
+                  for k in ${KEEP}; do [ "${tag}" = "${k}" ] && keep=1 && break; done
+                  if [ "${keep}" = "1" ]; then
+                    echo "keep   ${ref}"
+                  else
+                    echo "remove ${ref}"
+                    docker rmi "${ref}" || echo "::warning::could not remove ${ref} (still in use?)"
+                  fi
+                done
+            # Mop up layers left dangling by the removed/replaced tags.
+            docker image prune -f >/dev/null 2>&1 || true
+
+      - name: Rollback on failure
+        if: failure()
+        timeout-minutes: 10
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.HOST }}
+          username: ${{ secrets.USERNAME }}
+          password: ${{ secrets.PASSWORD }}
+          port: ${{ secrets.PORT }}
+          envs: IMAGE,SERVICE,IMAGE_TAG,STATE_DIR,HEALTH_URL,VERSION_URL
+          script: |
+            set -eu
+
+            # Only roll back if we actually touched the deployment. If a step before "Deploy new tag" failed,
+            # the original service is still running and healthy - touching it would cause a needless outage.
+            if [ ! -f "${STATE_DIR}/deploy_started" ]; then
+              echo "Deploy was never started; deployment unchanged. Skipping rollback."
+              exit 0
+            fi
+
+            OLD_IMAGE_REF="$(cat "${STATE_DIR}/old_image_ref" 2>/dev/null || true)"
+            OLD_REPLICAS="$(cat "${STATE_DIR}/old_replicas" 2>/dev/null || true)"
+            echo "::error::Deploy of ${IMAGE}:${IMAGE_TAG} failed - rolling back to ${OLD_IMAGE_REF:-<unknown>}"
+
+            # Restore the EXACT previous image by digest (never a tag that may now resolve to the broken build),
+            # then scale back to the captured replica count.
+            if [ -z "${OLD_IMAGE_REF}" ]; then
+              echo "::error::No previous image captured; cannot auto-restore the image. Manual intervention required."
+              exit 1
+            fi
+            docker pull "${OLD_IMAGE_REF}" || echo "::warning::could not pull ${OLD_IMAGE_REF}; relying on local copy"
+            docker service update --force --image "${OLD_IMAGE_REF}" "${SERVICE}"
+            docker service scale "${SERVICE}=${OLD_REPLICAS:-1}"
+
+            # Verify the restored image actually came back healthy. A failed rollback must be distinguishable from a
+            # failed deploy - never leave the service silently down believing we recovered.
+            if ! command -v curl >/dev/null 2>&1; then
+              echo "::warning::curl unavailable on host; cannot verify rollback health. Restored image=${OLD_IMAGE_REF}. Confirm /healthz manually."
+              exit 0
+            fi
+            echo "Verifying rollback health at ${HEALTH_URL}"
+            for i in $(seq 1 30); do
+              if curl -fsS --max-time 5 "${HEALTH_URL}" >/dev/null 2>&1; then
+                LIVE="$(curl -fsS --max-time 5 "${VERSION_URL}" 2>/dev/null || true)"
+                echo "Rollback healthy after ${i} check(s); live /version='${LIVE:-<unknown>}'"
+                exit 0
+              fi
+              echo "Rollback health ${i}/30 not ready; waiting 5s"
+              sleep 5
+            done
+            echo "::error::Service did NOT become healthy after rollback. Manual intervention required."
+            exit 1

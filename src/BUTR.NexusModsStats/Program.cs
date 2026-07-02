@@ -123,6 +123,7 @@ if (otlpSection.Get<OtlpOptions>() is { } otlpOptions)
 var app = builder
     .AddDownloadsEndpoint()
     .AddModVersionEndpoint()
+    .AddVersionEndpoint()
     .AddUptimeKuma()
     .Build();
 

@@ -23,6 +23,8 @@ RUN dotnet publish "src/BUTR.NexusModsStats/BUTR.NexusModsStats.csproj" -c Relea
 RUN upx --best --lzma /app/publish/BUTR.NexusModsStats || echo "UPX failed, continuing"
 
 FROM mcr.microsoft.com/dotnet/runtime-deps:10.0-noble-chiseled AS final
+ARG VERSION=dev
+ENV APP_VERSION=${VERSION}
 WORKDIR /app
 
 COPY --from=publish /app/publish /app
